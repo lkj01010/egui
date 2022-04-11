@@ -13,12 +13,14 @@ use egui::{Rect, Response, Ui, Vec2};
 
 /// Builder for a [`Table`] with (optional) fixed header and scrolling body.
 ///
-/// Cell widths are precalculated with given size hints so we can have tables like this:
+/// Cell widths are precalculated so we can have tables like this:
 ///
 /// | fixed size | all available space/minimum | 30% of available width | fixed size |
 ///
 /// In contrast to normal egui behavior, columns/rows do *not* grow with its children!
 /// Takes all available height, so if you want something below the table, put it in a strip.
+///
+/// You must pre-allocate all columns with [`Self::column`]/[`Self::columns`].
 ///
 /// ### Example
 /// ```
@@ -54,19 +56,20 @@ pub struct TableBuilder<'a> {
     striped: bool,
     resizable: bool,
     clip: bool,
+    cell_layout: egui::Layout,
 }
 
 impl<'a> TableBuilder<'a> {
     pub fn new(ui: &'a mut Ui) -> Self {
-        let sizing = Sizing::new();
-
+        let cell_layout = *ui.layout();
         Self {
             ui,
-            sizing,
+            sizing: Default::default(),
             scroll: true,
             striped: false,
             resizable: false,
             clip: true,
+            cell_layout,
         }
     }
 
@@ -102,13 +105,19 @@ impl<'a> TableBuilder<'a> {
         self
     }
 
-    /// Add size hint for column
+    /// What layout should we use for the individual cells?
+    pub fn cell_layout(mut self, cell_layout: egui::Layout) -> Self {
+        self.cell_layout = cell_layout;
+        self
+    }
+
+    /// Allocate space for one column.
     pub fn column(mut self, width: Size) -> Self {
         self.sizing.add(width);
         self
     }
 
-    /// Add size hint for several columns at once.
+    /// Allocate space for several columns at once.
     pub fn columns(mut self, size: Size, count: usize) -> Self {
         for _ in 0..count {
             self.sizing.add(size);
@@ -136,20 +145,22 @@ impl<'a> TableBuilder<'a> {
             striped,
             resizable,
             clip,
+            cell_layout,
         } = self;
 
         let resize_id = resizable.then(|| ui.id().with("__table_resize"));
 
-        let widths = read_table_widths(ui, resize_id)
-            .unwrap_or_else(|| sizing.to_lengths(available_width, ui.spacing().item_spacing.x));
+        let default_widths = sizing.to_lengths(available_width, ui.spacing().item_spacing.x);
+        let widths = read_persisted_widths(ui, default_widths, resize_id);
 
         let table_top = ui.cursor().top();
 
         {
-            let mut layout = StripLayout::new(ui, CellDirection::Horizontal, clip);
+            let mut layout = StripLayout::new(ui, CellDirection::Horizontal, clip, cell_layout);
             header(TableRow {
                 layout: &mut layout,
                 widths: &widths,
+                width_index: 0,
                 striped: false,
                 height,
             });
@@ -166,6 +177,7 @@ impl<'a> TableBuilder<'a> {
             scroll,
             striped,
             clip,
+            cell_layout,
         }
     }
 
@@ -183,12 +195,13 @@ impl<'a> TableBuilder<'a> {
             striped,
             resizable,
             clip,
+            cell_layout,
         } = self;
 
         let resize_id = resizable.then(|| ui.id().with("__table_resize"));
 
-        let widths = read_table_widths(ui, resize_id)
-            .unwrap_or_else(|| sizing.to_lengths(available_width, ui.spacing().item_spacing.x));
+        let default_widths = sizing.to_lengths(available_width, ui.spacing().item_spacing.x);
+        let widths = read_persisted_widths(ui, default_widths, resize_id);
 
         let table_top = ui.cursor().top();
 
@@ -202,19 +215,29 @@ impl<'a> TableBuilder<'a> {
             scroll,
             striped,
             clip,
+            cell_layout,
         }
         .body(body);
     }
 }
 
-fn read_table_widths(ui: &egui::Ui, resize_id: Option<egui::Id>) -> Option<Vec<f32>> {
+fn read_persisted_widths(
+    ui: &egui::Ui,
+    default_widths: Vec<f32>,
+    resize_id: Option<egui::Id>,
+) -> Vec<f32> {
     if let Some(resize_id) = resize_id {
         let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, Vec2::ZERO);
         ui.ctx().check_for_id_clash(resize_id, rect, "Table");
-        ui.data().get_persisted(resize_id)
-    } else {
-        None
+        if let Some(persisted) = ui.data().get_persisted::<Vec<f32>>(resize_id) {
+            // make sure that the stored widths aren't out-dated
+            if persisted.len() == default_widths.len() {
+                return persisted;
+            }
+        }
     }
+
+    default_widths
 }
 
 /// Table struct which can construct a [`TableBody`].
@@ -230,6 +253,7 @@ pub struct Table<'a> {
     scroll: bool,
     striped: bool,
     clip: bool,
+    cell_layout: egui::Layout,
 }
 
 impl<'a> Table<'a> {
@@ -248,6 +272,7 @@ impl<'a> Table<'a> {
             scroll,
             striped,
             clip,
+            cell_layout,
         } = self;
 
         let avail_rect = ui.available_rect_before_wrap();
@@ -257,7 +282,7 @@ impl<'a> Table<'a> {
         egui::ScrollArea::new([false, scroll])
             .auto_shrink([true; 2])
             .show(ui, move |ui| {
-                let layout = StripLayout::new(ui, CellDirection::Horizontal, clip);
+                let layout = StripLayout::new(ui, CellDirection::Horizontal, clip, cell_layout);
 
                 body(TableBody {
                     layout,
@@ -354,24 +379,65 @@ pub struct TableBody<'a> {
 }
 
 impl<'a> TableBody<'a> {
-    /// Add rows with same height.
+    fn y_progress(&self) -> f32 {
+        self.start_y - self.layout.current_y()
+    }
+
+    /// Return a vector containing all column widths for this table body.
     ///
-    /// Is a lot more performant than adding each individual row as non visible rows must not be rendered
+    /// This is primarily meant for use with [`TableBody::heterogeneous_rows`] in cases where row
+    /// heights are expected to according to the width of one or more cells -- for example, if text
+    /// is wrapped rather than clipped within the cell.
+    pub fn widths(&self) -> &[f32] {
+        &self.widths
+    }
+
+    /// Add a single row with the given height.
+    ///
+    /// If you have many thousands of row it can be more performant to instead use [`Self::rows]` or [`Self::heterogeneous_rows`].
+    pub fn row(&mut self, height: f32, row: impl FnOnce(TableRow<'a, '_>)) {
+        row(TableRow {
+            layout: &mut self.layout,
+            widths: &self.widths,
+            width_index: 0,
+            striped: self.striped && self.row_nr % 2 == 0,
+            height,
+        });
+
+        self.row_nr += 1;
+    }
+
+    /// Add many rows with same height.
+    ///
+    /// Is a lot more performant than adding each individual row as non visible rows must not be rendered.
+    ///
+    /// If you need many rows with different heights, use [`Self::heterogeneous_rows`] instead.
+    ///
+    /// ### Example
+    /// ```
+    /// # egui::__run_test_ui(|ui| {
+    /// use egui_extras::{TableBuilder, Size};
+    /// TableBuilder::new(ui)
+    ///     .column(Size::remainder().at_least(100.0))
+    ///     .body(|mut body| {
+    ///         let row_height = 18.0;
+    ///         let num_rows = 10_000;
+    ///         body.rows(row_height, num_rows, |row_index, mut row| {
+    ///             row.col(|ui| {
+    ///                 ui.label("First column");
+    ///             });
+    ///         });
+    ///     });
+    /// # });
+    /// ```
     pub fn rows(mut self, height: f32, rows: usize, mut row: impl FnMut(usize, TableRow<'_, '_>)) {
-        let delta = self.layout.current_y() - self.start_y;
+        let y_progress = self.y_progress();
         let mut start = 0;
 
-        if delta < 0.0 {
-            start = (-delta / height).floor() as usize;
+        if y_progress > 0.0 {
+            start = (y_progress / height).floor() as usize;
 
-            let skip_height = start as f32 * height;
-            TableRow {
-                layout: &mut self.layout,
-                widths: &self.widths,
-                striped: false,
-                height: skip_height,
-            }
-            .col(|_| ()); // advances the cursor
+            self.add_buffer(y_progress);
         }
 
         let max_height = self.end_y - self.start_y;
@@ -384,6 +450,7 @@ impl<'a> TableBody<'a> {
                 TableRow {
                     layout: &mut self.layout,
                     widths: &self.widths,
+                    width_index: 0,
                     striped: self.striped && idx % 2 == 0,
                     height,
                 },
@@ -393,26 +460,119 @@ impl<'a> TableBody<'a> {
         if rows - end > 0 {
             let skip_height = (rows - end) as f32 * height;
 
-            TableRow {
-                layout: &mut self.layout,
-                widths: &self.widths,
-                striped: false,
-                height: skip_height,
-            }
-            .col(|_| ()); // advances the cursor
+            self.add_buffer(skip_height);
         }
     }
 
-    /// Add row with individual height
-    pub fn row(&mut self, height: f32, row: impl FnOnce(TableRow<'a, '_>)) {
-        row(TableRow {
+    /// Add rows with varying heights.
+    ///
+    /// This takes a very slight performance hit compared to [`TableBody::rows`] due to the need to
+    /// iterate over all row heights in to calculate the virtual table height above and below the
+    /// visible region, but it is many orders of magnitude more performant than adding individual
+    /// heterogenously-sized rows using [`TableBody::row`] at the cost of the additional complexity
+    /// that comes with pre-calculating row heights and representing them as an iterator.
+    ///
+    /// ### Example
+    /// ```
+    /// # egui::__run_test_ui(|ui| {
+    /// use egui_extras::{TableBuilder, Size};
+    /// TableBuilder::new(ui)
+    ///     .column(Size::remainder().at_least(100.0))
+    ///     .body(|mut body| {
+    ///         let row_heights: Vec<f32> = vec![60.0, 18.0, 31.0, 240.0];
+    ///         body.heterogeneous_rows(row_heights.into_iter(), |row_index, mut row| {
+    ///             let thick = row_index % 6 == 0;
+    ///             row.col(|ui| {
+    ///                 ui.centered_and_justified(|ui| {
+    ///                     ui.label(row_index.to_string());
+    ///                 });
+    ///             });
+    ///         });
+    ///     });
+    /// # });
+    /// ```
+    pub fn heterogeneous_rows(
+        mut self,
+        heights: impl Iterator<Item = f32>,
+        mut populate_row: impl FnMut(usize, TableRow<'_, '_>),
+    ) {
+        // in order for each row to retain its striped color as the table is scrolled, we need an
+        // iterator with the boolean built in based on the enumerated index of the iterator element
+        let mut striped_heights = heights
+            .enumerate()
+            .map(|(index, height)| (index, index % 2 == 0, height));
+
+        let max_height = self.end_y - self.start_y;
+        let y_progress = self.y_progress();
+
+        // cumulative height of all rows above those being displayed
+        let mut height_above_visible: f64 = 0.0;
+        // cumulative height of all rows below those being displayed
+        let mut height_below_visible: f64 = 0.0;
+
+        // calculate height above visible table range and populate the first non-virtual row.
+        // because this row is meant to slide under the top bound of the visual table we calculate
+        // height_of_first_row + height_above_visible >= y_progress as our break condition rather
+        // than just height_above_visible >= y_progress
+        for (row_index, striped, height) in &mut striped_heights {
+            if height as f64 + height_above_visible >= y_progress as f64 {
+                self.add_buffer(height_above_visible as f32);
+                let tr = TableRow {
+                    layout: &mut self.layout,
+                    widths: &self.widths,
+                    width_index: 0,
+                    striped: self.striped && striped,
+                    height,
+                };
+                self.row_nr += 1;
+                populate_row(row_index, tr);
+                break;
+            }
+            height_above_visible += height as f64;
+        }
+
+        // populate visible rows, including the final row that should slide under the bottom bound
+        // of the visible table.
+        let mut current_height: f64 = 0.0;
+        for (row_index, striped, height) in &mut striped_heights {
+            if height as f64 + current_height > max_height as f64 {
+                break;
+            }
+            let tr = TableRow {
+                layout: &mut self.layout,
+                widths: &self.widths,
+                width_index: 0,
+                striped: self.striped && striped,
+                height,
+            };
+            self.row_nr += 1;
+            populate_row(row_index, tr);
+            current_height += height as f64;
+        }
+
+        // calculate height below the visible table range
+        for (_, _, height) in striped_heights {
+            height_below_visible += height as f64;
+        }
+
+        // if height below visible is > 0 here then we need to add a buffer to allow the table to
+        // accurately calculate the "virtual" scrollbar position
+        if height_below_visible > 0.0 {
+            self.add_buffer(height_below_visible as f32);
+        }
+    }
+
+    // Create a table row buffer of the given height to represent the non-visible portion of the
+    // table.
+    fn add_buffer(&mut self, height: f32) {
+        TableRow {
             layout: &mut self.layout,
             widths: &self.widths,
-            striped: self.striped && self.row_nr % 2 == 0,
+            width_index: 0,
+            striped: false,
             height,
-        });
-
-        self.row_nr += 1;
+        }
+        .col(|_| ()); // advances the cursor
     }
 }
 
@@ -427,6 +587,7 @@ impl<'a> Drop for TableBody<'a> {
 pub struct TableRow<'a, 'b> {
     layout: &'b mut StripLayout<'a>,
     widths: &'b [f32],
+    width_index: usize,
     striped: bool,
     height: f32,
 }
@@ -434,13 +595,17 @@ pub struct TableRow<'a, 'b> {
 impl<'a, 'b> TableRow<'a, 'b> {
     /// Add the contents of a column.
     pub fn col(&mut self, add_contents: impl FnOnce(&mut Ui)) -> Response {
-        assert!(
-            !self.widths.is_empty(),
-            "Tried using more table columns than available."
-        );
+        let width = if let Some(width) = self.widths.get(self.width_index) {
+            self.width_index += 1;
+            *width
+        } else {
+            crate::log_or_panic!(
+                "Added more `Table` columns than were pre-allocated ({} pre-allocated)",
+                self.widths.len()
+            );
+            8.0 // anything will look wrong, so pick something that is obviously wrong
+        };
 
-        let width = self.widths[0];
-        self.widths = &self.widths[1..];
         let width = CellSize::Absolute(width);
         let height = CellSize::Absolute(self.height);
 

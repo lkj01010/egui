@@ -32,20 +32,27 @@ pub struct StripLayout<'l> {
     cursor: Pos2,
     max: Pos2,
     pub(crate) clip: bool,
+    cell_layout: egui::Layout,
 }
 
 impl<'l> StripLayout<'l> {
-    pub(crate) fn new(ui: &'l mut Ui, direction: CellDirection, clip: bool) -> Self {
+    pub(crate) fn new(
+        ui: &'l mut Ui,
+        direction: CellDirection,
+        clip: bool,
+        cell_layout: egui::Layout,
+    ) -> Self {
         let rect = ui.available_rect_before_wrap();
         let pos = rect.left_top();
 
         Self {
             ui,
+            direction,
             rect,
             cursor: pos,
             max: pos,
-            direction,
             clip,
+            cell_layout,
         }
     }
 
@@ -121,24 +128,24 @@ impl<'l> StripLayout<'l> {
     pub fn end_line(&mut self) {
         match self.direction {
             CellDirection::Horizontal => {
-                self.cursor.y = self.max.y;
+                self.cursor.y = self.max.y + self.ui.spacing().item_spacing.y;
                 self.cursor.x = self.rect.left();
             }
             CellDirection::Vertical => {
-                self.cursor.x = self.max.x;
+                self.cursor.x = self.max.x + self.ui.spacing().item_spacing.x;
                 self.cursor.y = self.rect.top();
             }
         }
     }
 
     fn cell(&mut self, rect: Rect, add_contents: impl FnOnce(&mut Ui)) -> Rect {
-        let mut child_ui = self.ui.child_ui(rect, *self.ui.layout());
+        let mut child_ui = self.ui.child_ui(rect, self.cell_layout);
 
         if self.clip {
-            let mut clip_rect = child_ui.clip_rect();
-            clip_rect.min = clip_rect.min.max(rect.min);
-            clip_rect.max = clip_rect.max.min(rect.max);
-            child_ui.set_clip_rect(clip_rect);
+            let margin = egui::Vec2::splat(self.ui.visuals().clip_rect_margin);
+            let margin = margin.min(0.5 * self.ui.spacing().item_spacing);
+            let clip_rect = rect.expand2(margin);
+            child_ui.set_clip_rect(clip_rect.intersect(child_ui.clip_rect()));
         }
 
         add_contents(&mut child_ui);
