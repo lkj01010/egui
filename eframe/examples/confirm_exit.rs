@@ -15,6 +15,7 @@ fn main() {
 struct MyApp {
     can_exit: bool,
     is_exiting: bool,
+    i: u32
 }
 
 impl eframe::App for MyApp {
@@ -29,7 +30,7 @@ impl eframe::App for MyApp {
         });
 
         if self.is_exiting {
-            egui::Window::new("Do you want to quit?")
+            let w = egui::Window::new("Do you want to quit?")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -44,6 +45,9 @@ impl eframe::App for MyApp {
                         }
                     });
                 });
+            let w2 = w.unwrap();
+            self.i += 1;
+            // print!("cnt -> {}\n", self.i)
         }
     }
 }
