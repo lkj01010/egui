@@ -28,7 +28,7 @@ bytemuck = ["egui/bytemuck"]
 clipboard = ["arboard"]
 
 # detect dark mode system preference
-dark-light = ["dep:dark-light"]
+#dark-light = ["dep:dark-light"]
 
 # Only for `egui_glow` - the official eframe/epi backend.
 epi_backend = ["epi", "glow"]
@@ -40,7 +40,7 @@ links = ["webbrowser"]
 screen_reader = ["tts"]
 
 persistence = ["egui/serde", "serde", "epi?/persistence"]
-serde = ["egui/serde", "dep:serde"]
+#serde = ["egui/serde", "dep:serde"]
 
 
 [dependencies]

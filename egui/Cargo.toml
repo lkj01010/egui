@@ -44,7 +44,7 @@ mint = ["epaint/mint"]
 persistence = ["serde", "epaint/serde", "ron"]
 
 # implement serde on most types.
-serde = ["dep:serde", "epaint/serde"]
+#serde = ["dep:serde", "epaint/serde"]
 
 
 [dependencies]

@@ -1,4 +1,5 @@
 ## unwrap / ?
+
 ```rust
 fn read_username_from_file() -> Result<String, io::Error> {
     let mut file = File::open("./Cargo.toml")?;
@@ -7,8 +8,8 @@ fn read_username_from_file() -> Result<String, io::Error> {
     Result::Ok(str)
 }
 ```
-// 问号意味着如果处理正常，则当前表达式返回处理结果，
-// 如果报错，则将表达式所在的函数结束执行并返回Result::Err错误信息。
+
+// 问号意味着如果处理正常，则当前表达式返回处理结果， // 如果报错，则将表达式所在的函数结束执行并返回Result::Err错误信息。
 
 - https://zhuanlan.zhihu.com/p/377739309
 
@@ -19,3 +20,13 @@ fn read_username_from_file() -> Result<String, io::Error> {
 ## Box、Rc、Arc、Cell、RefCell、Cow简介
 
 - https://blog.csdn.net/hbuxiaofei/article/details/113814516
+- 查看代码，Box,Rc 的 `borrow` 和 `as_ref` 的实现一样
+    ```rust
+    fn borrow(&self) -> &T {
+        &**self
+    }
+    ```
+- Syn: 跨线程共享
+  - rust 的可变引用要求过于严苛导致我们很多时候必须使用不可变引用来改变自身，所以 Sync 是用来标记不可变借用可线程安全地访问的
+  - 对于可变引用 &mut 天然可以，因为只存在一个，且不和可变共存
+  - 对于不可变 ，需要 Arc<Mutex<T>> 或`其他？`

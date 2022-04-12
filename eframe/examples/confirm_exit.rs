@@ -19,11 +19,6 @@ struct MyApp {
 }
 
 impl eframe::App for MyApp {
-    fn on_exit_event(&mut self) -> bool {
-        self.is_exiting = true;
-        self.can_exit
-    }
-
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Try to close the window");
@@ -47,7 +42,12 @@ impl eframe::App for MyApp {
                 });
             let w2 = w.unwrap();
             self.i += 1;
-            // print!("cnt -> {}\n", self.i)
+            print!("cnt -> {}\n", self.i)
         }
+    }
+
+    fn on_exit_event(&mut self) -> bool {
+        self.is_exiting = true;
+        self.can_exit
     }
 }
