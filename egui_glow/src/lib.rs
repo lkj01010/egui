@@ -1,8 +1,7 @@
 //! [`egui`] bindings for [`glow`](https://github.com/grovesNL/glow).
 //!
-//! The main type you want to use is [`EguiGlow`].
+//! The main types you want to look are are [`Painter`] and [`EguiGlow`].
 //!
-//! This library is an [`epi`] backend.
 //! If you are writing an app, you may want to look at [`eframe`](https://docs.rs/eframe) instead.
 
 #![allow(clippy::float_cmp)]
@@ -21,13 +20,9 @@ pub mod winit;
 #[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 pub use winit::*;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
-mod epi_backend;
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
-pub use epi_backend::{run, NativeOptions};
-
 /// Check for OpenGL error and report it using `tracing::error`.
+///
+/// Only active in debug builds!
 ///
 /// ``` no_run
 /// # let glow_context = todo!();
@@ -37,6 +32,30 @@ pub use epi_backend::{run, NativeOptions};
 /// ```
 #[macro_export]
 macro_rules! check_for_gl_error {
+    ($gl: expr) => {{
+        if cfg!(debug_assertions) {
+            $crate::check_for_gl_error_impl($gl, file!(), line!(), "")
+        }
+    }};
+    ($gl: expr, $context: literal) => {{
+        if cfg!(debug_assertions) {
+            $crate::check_for_gl_error_impl($gl, file!(), line!(), $context)
+        }
+    }};
+}
+
+/// Check for OpenGL error and report it using `tracing::error`.
+///
+/// WARNING: slow! Only use during setup!
+///
+/// ``` no_run
+/// # let glow_context = todo!();
+/// use egui_glow::check_for_gl_error_even_in_release;
+/// check_for_gl_error_even_in_release!(glow_context);
+/// check_for_gl_error_even_in_release!(glow_context, "during painting");
+/// ```
+#[macro_export]
+macro_rules! check_for_gl_error_even_in_release {
     ($gl: expr) => {{
         $crate::check_for_gl_error_impl($gl, file!(), line!(), "")
     }};
@@ -85,3 +104,25 @@ pub fn check_for_gl_error_impl(gl: &glow::Context, file: &str, line: u32, contex
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+
+/// Profiling macro for feature "puffin"
+macro_rules! profile_function {
+    ($($arg: tt)*) => {
+        #[cfg(feature = "puffin")]
+        #[cfg(not(target_arch = "wasm32"))]
+        puffin::profile_function!($($arg)*);
+    };
+}
+pub(crate) use profile_function;
+
+/// Profiling macro for feature "puffin"
+macro_rules! profile_scope {
+    ($($arg: tt)*) => {
+        #[cfg(feature = "puffin")]
+        #[cfg(not(target_arch = "wasm32"))]
+        puffin::profile_scope!($($arg)*);
+    };
+}
+pub(crate) use profile_scope;

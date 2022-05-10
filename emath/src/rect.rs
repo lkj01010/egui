@@ -317,6 +317,17 @@ impl Rect {
         self.width() * self.height()
     }
 
+    /// The distance from the rect to the position.
+    ///
+    /// The distance is zero when the position is in the interior of the rectangle.
+    #[inline]
+    pub fn distance_to_pos(&self, pos: Pos2) -> f32 {
+        self.distance_sq_to_pos(pos).sqrt()
+    }
+
+    /// The distance from the rect to the position, squared.
+    ///
+    /// The distance is zero when the position is in the interior of the rectangle.
     #[inline]
     pub fn distance_sq_to_pos(&self, pos: Pos2) -> f32 {
         let dx = if self.min.x > pos.x {
@@ -346,6 +357,15 @@ impl Rect {
         let inside_dist = edge_distances.x.max(edge_distances.y).min(0.0);
         let outside_dist = edge_distances.max(Vec2::ZERO).length();
         inside_dist + outside_dist
+    }
+
+    /// Linearly interpolate so that `[0, 0]` is [`Self::min`] and
+    /// `[1, 1]` is [`Self::max`].
+    pub fn lerp(&self, t: Vec2) -> Pos2 {
+        Pos2 {
+            x: lerp(self.min.x..=self.max.x, t.x),
+            y: lerp(self.min.y..=self.max.y, t.y),
+        }
     }
 
     #[inline(always)]

@@ -33,7 +33,15 @@ pub struct InputState {
     /// (We keep a separate [`TouchState`] for each encountered touch device.)
     touch_states: BTreeMap<TouchDeviceId, TouchState>,
 
-    /// How many pixels the user scrolled.
+    /// How many points the user scrolled.
+    ///
+    /// The delta dictates how the _content_ should move.
+    ///
+    /// A positive X-value indicates the content is being moved right,
+    /// as when swiping right on a touch-screen or track-pad with natural scrolling.
+    ///
+    /// A positive Y-value indicates the content is being moved down,
+    /// as when swiping down on a touch-screen or track-pad with natural scrolling.
     pub scroll_delta: Vec2,
 
     /// Zoom scale factor this frame (e.g. from ctrl-scroll or pinch gesture).
@@ -298,7 +306,7 @@ impl InputState {
     /// ```
     ///
     /// By far not all touch devices are supported, and the details depend on the `egui`
-    /// integration backend you are using. `egui_web` supports multi touch for most mobile
+    /// integration backend you are using. `eframe` web supports multi touch for most mobile
     /// devices, but not for a `Trackpad` on `MacOS`, for example. The backend has to be able to
     /// capture native touch events, but many browsers seem to pass such events only for touch
     /// _screens_, but not touch _pads._
@@ -341,7 +349,7 @@ impl InputState {
 pub(crate) struct Click {
     pub pos: Pos2,
     pub button: PointerButton,
-    /// 1 or 2 (double-click)
+    /// 1 or 2 (double-click) or 3 (triple-click)
     pub count: u32,
     /// Allows you to check for e.g. shift-click
     pub modifiers: Modifiers,
@@ -351,18 +359,24 @@ impl Click {
     pub fn is_double(&self) -> bool {
         self.count == 2
     }
+    pub fn is_triple(&self) -> bool {
+        self.count == 3
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PointerEvent {
     Moved(Pos2),
-    Pressed(Pos2),
+    Pressed {
+        position: Pos2,
+        button: PointerButton,
+    },
     Released(Option<Click>),
 }
 
 impl PointerEvent {
     pub fn is_press(&self) -> bool {
-        matches!(self, PointerEvent::Pressed(_))
+        matches!(self, PointerEvent::Pressed { .. })
     }
     pub fn is_release(&self) -> bool {
         matches!(self, PointerEvent::Released(_))
@@ -421,6 +435,10 @@ pub struct PointerState {
     /// Used to check for double-clicks.
     last_click_time: f64,
 
+    /// When did the pointer get click two clicks ago?
+    /// Used to check for triple-clicks.
+    last_last_click_time: f64,
+
     /// All button events that occurred this frame
     pub(crate) pointer_events: Vec<PointerEvent>,
 }
@@ -439,6 +457,7 @@ impl Default for PointerState {
             press_start_time: None,
             has_moved_too_much_for_a_click: false,
             last_click_time: std::f64::NEG_INFINITY,
+            last_last_click_time: std::f64::NEG_INFINITY,
             pointer_events: vec![],
         }
     }
@@ -493,15 +512,27 @@ impl PointerState {
                         self.press_origin = Some(pos);
                         self.press_start_time = Some(time);
                         self.has_moved_too_much_for_a_click = false;
-                        self.pointer_events.push(PointerEvent::Pressed(pos));
+                        self.pointer_events.push(PointerEvent::Pressed {
+                            position: pos,
+                            button,
+                        });
                     } else {
                         let clicked = self.could_any_button_be_click();
 
                         let click = if clicked {
                             let double_click =
                                 (time - self.last_click_time) < MAX_DOUBLE_CLICK_DELAY;
-                            let count = if double_click { 2 } else { 1 };
+                            let triple_click =
+                                (time - self.last_last_click_time) < (MAX_DOUBLE_CLICK_DELAY * 2.0);
+                            let count = if triple_click {
+                                3
+                            } else if double_click {
+                                2
+                            } else {
+                                1
+                            };
 
+                            self.last_last_click_time = self.last_click_time;
                             self.last_click_time = time;
 
                             Some(Click {
@@ -642,6 +673,23 @@ impl PointerState {
         self.pointer_events.iter().any(|event| event.is_release())
     }
 
+    /// Was the button given released this frame?
+    pub fn button_released(&self, button: PointerButton) -> bool {
+        self.pointer_events
+            .iter()
+            .any(|event| matches!(event, &PointerEvent::Released(Some(Click{button: b, ..})) if button == b))
+    }
+
+    /// Was the primary button released this frame?
+    pub fn primary_released(&self) -> bool {
+        self.button_released(PointerButton::Primary)
+    }
+
+    /// Was the secondary button released this frame?
+    pub fn secondary_released(&self) -> bool {
+        self.button_released(PointerButton::Secondary)
+    }
+
     /// Is any pointer button currently down?
     pub fn any_down(&self) -> bool {
         self.down.iter().any(|&down| down)
@@ -650,6 +698,23 @@ impl PointerState {
     /// Were there any type of click this frame?
     pub fn any_click(&self) -> bool {
         self.pointer_events.iter().any(|event| event.is_click())
+    }
+
+    /// Was the button given clicked this frame?
+    pub fn button_clicked(&self, button: PointerButton) -> bool {
+        self.pointer_events
+            .iter()
+            .any(|event| matches!(event, &PointerEvent::Pressed { button: b, .. } if button == b))
+    }
+
+    /// Was the primary button clicked this frame?
+    pub fn primary_clicked(&self) -> bool {
+        self.button_clicked(PointerButton::Primary)
+    }
+
+    /// Was the secondary button clicked this frame?
+    pub fn secondary_clicked(&self) -> bool {
+        self.button_clicked(PointerButton::Secondary)
     }
 
     // /// Was this button pressed (`!down -> down`) this frame?
@@ -789,6 +854,7 @@ impl PointerState {
             press_start_time,
             has_moved_too_much_for_a_click,
             last_click_time,
+            last_last_click_time,
             pointer_events,
         } = self;
 
@@ -807,6 +873,7 @@ impl PointerState {
             has_moved_too_much_for_a_click
         ));
         ui.label(format!("last_click_time: {:#?}", last_click_time));
+        ui.label(format!("last_last_click_time: {:#?}", last_last_click_time));
         ui.label(format!("pointer_events: {:?}", pointer_events));
     }
 }

@@ -1,10 +1,13 @@
+use std::ops::RangeInclusive;
+use std::sync::Arc;
+
 use crate::{
-    emath::{Align2, Pos2, Rect, Vec2},
+    emath::{pos2, Align2, Pos2, Rect, Vec2},
     layers::{LayerId, PaintList, ShapeIdx},
     Color32, Context, FontId,
 };
 use epaint::{
-    mutex::{Arc, RwLockReadGuard, RwLockWriteGuard},
+    mutex::{RwLockReadGuard, RwLockWriteGuard},
     text::{Fonts, Galley},
     CircleShape, RectShape, Rounding, Shape, Stroke,
 };
@@ -51,6 +54,19 @@ impl Painter {
         }
     }
 
+    /// Create a painter for a sub-region of this [`Painter`].
+    ///
+    /// The clip-rect of the returned [`Painter`] will be the intersection
+    /// of the given rectangle and the `clip_rect()` of the parent [`Painter`].
+    pub fn with_clip_rect(&self, rect: Rect) -> Self {
+        Self {
+            ctx: self.ctx.clone(),
+            layer_id: self.layer_id,
+            clip_rect: rect.intersect(self.clip_rect),
+            fade_to_color: self.fade_to_color,
+        }
+    }
+
     /// Redirect where you are painting.
     pub fn set_layer_id(&mut self, layer_id: LayerId) {
         self.layer_id = layer_id;
@@ -70,10 +86,7 @@ impl Painter {
         self.fade_to_color = Some(Color32::TRANSPARENT);
     }
 
-    /// Create a painter for a sub-region of this [`Painter`].
-    ///
-    /// The clip-rect of the returned [`Painter`] will be the intersection
-    /// of the given rectangle and the `clip_rect()` of this [`Painter`].
+    #[deprecated = "Use Painter::with_clip_rect"] // Deprecated in 2022-04-18, before egui 0.18
     pub fn sub_region(&self, rect: Rect) -> Self {
         Self {
             ctx: self.ctx.clone(),
@@ -194,7 +207,7 @@ impl Painter {
 /// ## Debug painting
 impl Painter {
     #[allow(clippy::needless_pass_by_value)]
-    pub fn debug_rect(&mut self, rect: Rect, color: Color32, text: impl ToString) {
+    pub fn debug_rect(&self, rect: Rect, color: Color32, text: impl ToString) {
         self.rect_stroke(rect, 0.0, (1.0, color));
         self.text(
             rect.min,
@@ -233,11 +246,26 @@ impl Painter {
 
 /// # Paint different primitives
 impl Painter {
-    /// Paints the line from the first point to the second using the `stroke`
-    /// for outlining shape.
+    /// Paints a line from the first point to the second.
     pub fn line_segment(&self, points: [Pos2; 2], stroke: impl Into<Stroke>) {
         self.add(Shape::LineSegment {
             points,
+            stroke: stroke.into(),
+        });
+    }
+
+    /// Paints a horizontal line.
+    pub fn hline(&self, x: RangeInclusive<f32>, y: f32, stroke: impl Into<Stroke>) {
+        self.add(Shape::LineSegment {
+            points: [pos2(*x.start(), y), pos2(*x.end(), y)],
+            stroke: stroke.into(),
+        });
+    }
+
+    /// Paints a vertical line.
+    pub fn vline(&self, x: f32, y: RangeInclusive<f32>, stroke: impl Into<Stroke>) {
+        self.add(Shape::LineSegment {
+            points: [pos2(x, *y.start()), pos2(x, *y.end())],
             stroke: stroke.into(),
         });
     }
