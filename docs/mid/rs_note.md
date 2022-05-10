@@ -30,3 +30,9 @@ fn read_username_from_file() -> Result<String, io::Error> {
   - rust 的可变引用要求过于严苛导致我们很多时候必须使用不可变引用来改变自身，所以 Sync 是用来标记不可变借用可线程安全地访问的
   - 对于可变引用 &mut 天然可以，因为只存在一个，且不和可变共存
   - 对于不可变 ，需要 Arc<Mutex<T>> 或`其他？`
+
+- RefCell
+  - 可以多次 borrow(读), 只能一次 borrow_mut(写)
+  - 不能同时读和写
+  - 内部使用 BorrowFlag 来判断，初始化时为0，读+1，写-1，见`RefCell::try_borrow`
+  
